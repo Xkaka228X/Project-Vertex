@@ -36,6 +36,9 @@ end
 local Config = { 
     Aim = false, 
     TargetLock = true,
+    VisibleCheck = false,
+    DistancePriority = false,
+    MaxAimDist = 1000,
     ESP = true, 
     ESPName = true,
     ESPDist = true,
@@ -163,6 +166,9 @@ local Locale = {
         Settings = "Настройки", 
         AimbotMaster = "Аимбот (Мышь)", 
         TargetLock = "Target Lock (Камера)",
+        VisibleCheck = "Проверка Видимости",
+        DistancePriority = "Приоритет по Дистанции",
+        MaxAimDist = "Лимит Дистанции Аима",
         TargetPart = "Цель Аима", 
         AimbotSpeed = "Скорость Аима", 
         Smoothness = "Плавность", 
@@ -190,6 +196,9 @@ local Locale = {
         AddZoomBtm = "Создать Кнопку Зума", 
         Help_AimbotMaster = "Классический плавный аимбот по кругу FOV. Наводится через прямое смещение камеры, полностью оптимизирован под мобильные клиенты.",
         Help_TargetLock = "Наводится на абсолютно ближайшего игрока на карте по 3D дистанции, игнорируя FOV и стены.", 
+        Help_VisibleCheck = "Игнорирует цели, скрытые за стенами и другими препятствиями.",
+        Help_DistancePriority = "Сначала наводится на противника, который находится ближе всего к вам по расстоянию, а не к прицелу.",
+        Help_MaxAimDist = "Ограничивает работу аимбота. Цели дальше этого расстояния будут игнорироваться.",
         Help_TargetPart = "Выбирает конкретную часть тела (Голова, Торс), на которую будет наводиться аимбот.", 
         Help_AimbotSpeed = "Регулирует скорость доводки прицела до цели. Выше значение — быстрее наводка.", 
         Help_Smoothness = "Сглаживает движение камеры при наводке, делая её более легитной и незаметной.", 
@@ -216,6 +225,9 @@ local Locale = {
         Settings = "Settings", 
         AimbotMaster = "Aimbot (Mouse)", 
         TargetLock = "Target Lock (Camera)",
+        VisibleCheck = "Visibility Check",
+        DistancePriority = "Distance Priority",
+        MaxAimDist = "Aim Distance Limit",
         TargetPart = "Target Part", 
         AimbotSpeed = "Aimbot Speed", 
         Smoothness = "Smoothness", 
@@ -243,6 +255,9 @@ local Locale = {
         AddZoomBtm = "Add Zoom Button", 
         Help_AimbotMaster = "Smooth camera aimbot within the FOV circle. Fully mobile optimized.",
         Help_TargetLock = "Locks camera onto the closest player by 3D distance, ignoring FOV and walls.", 
+        Help_VisibleCheck = "Ignores targets hidden behind walls and other obstacles.",
+        Help_DistancePriority = "Locks onto the closest enemy by 3D distance first instead of crosshair proximity.",
+        Help_MaxAimDist = "Limits aimbot execution distance. Targets further away are completely ignored.",
         Help_TargetPart = "Selects the specific body part (Head, Torso) that the aimbot will lock onto.", 
         Help_AimbotSpeed = "Adjusts the aiming response speed. Higher value means faster lock-on.", 
         Help_Smoothness = "Smooths out camera movements while aiming, making tracking look legit and natural.", 
@@ -713,6 +728,8 @@ local function AddToggle(container, configKey, localeKey, default, callback)
         if configKey == "TargetLock" then displayString = "Lock" end
         if configKey == "Hitboxes" then displayString = "Hitbox" end
         if configKey == "NightVision" then displayString = "Light" end
+        if configKey == "VisibleCheck" then displayString = "Vis" end
+        if configKey == "DistancePriority" then displayString = "Dist" end
         
         local HotkeyMain = Instance.new("Frame")
         HotkeyMain.Name = "Hotkey_" .. configKey
@@ -1068,6 +1085,9 @@ local SettingsTab = CreateTab("Settings", "Settings")
 
 AddToggle(CombatTab, "Aim", "AimbotMaster", Config.Aim, function(v) Config.Aim = v end) 
 AddToggle(CombatTab, "TargetLock", "TargetLock", Config.TargetLock, function(v) Config.TargetLock = v end) 
+AddToggle(CombatTab, "VisibleCheck", "VisibleCheck", Config.VisibleCheck, function(v) Config.VisibleCheck = v end)
+AddToggle(CombatTab, "DistancePriority", "DistancePriority", Config.DistancePriority, function(v) Config.DistancePriority = v end)
+AddSlider(CombatTab, "MaxAimDist", 50, 5000, Config.MaxAimDist, function(v) Config.MaxAimDist = v end)
 AddDropdown(CombatTab, "TargetPart", {"Head", "HumanoidRootPart", "LowerTorso"}, Config.Part, function(v) Config.Part = v end) 
 AddSlider(CombatTab, "AimbotSpeed", 0.05, 1, Config.Speed, function(v) Config.Speed = v end) 
 AddSlider(CombatTab, "Smoothness", 0, 0.9, Config.Smooth, function(v) Config.Smooth = v end) 
@@ -1368,6 +1388,12 @@ local function DrawBone(line, p1, p2, col, vis)
     line.Visible = false 
 end 
 
+local function CheckVisibility(part, character)
+    if not Config.VisibleCheck then return true end
+    local castParts = Camera:GetPartsObscuringTarget({part.Position}, {LocalPlayer.Character, character})
+    return #castParts == 0
+end
+
 local function GetClosestTargetForLock() 
     local target, min3DDist = nil, math_huge 
     local myCharacter = LocalPlayer.Character 
@@ -1383,9 +1409,11 @@ local function GetClosestTargetForLock()
             local part = p.Character:FindFirstChild(Config.Part) 
             if hum and part and hum.Health > 0 then 
                 local dist3D = (myRoot.Position - part.Position).Magnitude 
-                if dist3D < min3DDist and dist3D <= Config.MaxDist then 
-                    min3DDist = dist3D 
-                    target = part 
+                if dist3D < min3DDist and dist3D <= Config.MaxDist and dist3D <= Config.MaxAimDist then 
+                    if CheckVisibility(part, p.Character) then
+                        min3DDist = dist3D 
+                        target = part 
+                    end
                 end 
             end 
         end 
@@ -1394,10 +1422,11 @@ local function GetClosestTargetForLock()
 end 
 
 local function GetClosestTargetForAim() 
-    local target, minMouseDist = nil, math_huge 
+    local target, minMouseDist, min3DDist = nil, math_huge, math_huge 
     local center = Vector2_new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2) 
     local myCharacter = LocalPlayer.Character 
     if not myCharacter then return nil end 
+    local myRoot = myCharacter:FindFirstChild("HumanoidRootPart")
 
     local playersArray = Players:GetPlayers() 
     for i = 1, #playersArray do 
@@ -1406,14 +1435,28 @@ local function GetClosestTargetForAim()
             local hum = p.Character:FindFirstChild("Humanoid") 
             local part = p.Character:FindFirstChild(Config.Part) 
             if hum and part and hum.Health > 0 then 
-                local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position) 
-                if onScreen then 
-                    local mouseDist = (Vector2_new(screenPos.X, screenPos.Y) - center).Magnitude 
-                    if mouseDist < minMouseDist and mouseDist <= Config.FOV then 
-                        minMouseDist = mouseDist 
-                        target = part 
+                local dist3D = myRoot and (myRoot.Position - part.Position).Magnitude or 0
+                if dist3D <= Config.MaxAimDist then
+                    local screenPos, onScreen = Camera:WorldToViewportPoint(part.Position) 
+                    if onScreen then 
+                        local mouseDist = (Vector2_new(screenPos.X, screenPos.Y) - center).Magnitude 
+                        if mouseDist <= Config.FOV then 
+                            if CheckVisibility(part, p.Character) then
+                                if Config.DistancePriority then
+                                    if dist3D < min3DDist then
+                                        min3DDist = dist3D
+                                        target = part
+                                    end
+                                else
+                                    if mouseDist < minMouseDist then
+                                        minMouseDist = mouseDist 
+                                        target = part 
+                                    end
+                                end
+                            end
+                        end 
                     end 
-                end 
+                end
             end 
         end 
     end 
